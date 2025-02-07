@@ -1,10 +1,10 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const pool = require("../db");
-const logger = require("../logger"); // Import Winston Logger
+const logger = require("../logger"); // Winston Logger
 require("dotenv").config();
 
-// Register a new user
+// User Registration
 const register = async (req, res) => {
   try {
     const { full_name, email, phone, password } = req.body;
@@ -40,7 +40,7 @@ const register = async (req, res) => {
   }
 };
 
-// User login
+// User Login
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -83,4 +83,16 @@ const login = async (req, res) => {
   }
 };
 
-module.exports = { register, login };
+// User Logout
+const logout = async (req, res) => {
+  try {
+    res.cookie("token", "", { expires: new Date(0), httpOnly: true });
+    logger.info(`User Logged Out - IP: ${req.ip}`);
+    res.status(200).json({ message: "Logged out successfully!" });
+  } catch (err) {
+    logger.error(`❌ Logout Error: ${err.message}`);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+module.exports = { register, login, logout };
