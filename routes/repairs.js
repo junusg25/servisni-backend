@@ -5,6 +5,7 @@ const {
   addRepair,
   updateRepair,
   deleteRepair,
+  getRepairsForMachine,
 } = require("../controllers/repairController");
 const authenticateToken = require("../middleware/authMiddleware");
 
@@ -16,5 +17,10 @@ router.get("/:id", authenticateToken, getRepairById);
 router.post("/", authenticateToken, addRepair);
 router.put("/:id", authenticateToken, updateRepair);
 router.delete("/:id", authenticateToken, deleteRepair);
+router.get(
+  "/for-machine/:machine_id/client/:client_id",
+  authenticateToken,
+  getRepairsForMachine
+);
 
 module.exports = router;

@@ -9,11 +9,22 @@ const getClients = async (req, res) => {
     limit = parseInt(limit) || 10;
     const offset = (page - 1) * limit;
 
-    let query = "SELECT * FROM clients";
+    let query = `
+      SELECT 
+        id, 
+        name, 
+        email, 
+        COALESCE(phone, '') AS phone, 
+        COALESCE(address, '') AS address, 
+        COALESCE(city, '') AS city, 
+        COALESCE(country, '') AS country, 
+        COALESCE(notes, '') AS notes
+      FROM clients
+    `;
+
     let params = [];
     let conditions = [];
 
-    // Filtering by name or email
     if (search) {
       conditions.push(
         "(name ILIKE $" +
@@ -25,20 +36,17 @@ const getClients = async (req, res) => {
       params.push(`%${search}%`);
     }
 
-    // Append WHERE clause if conditions exist
     if (conditions.length > 0) {
       query += " WHERE " + conditions.join(" AND ");
     }
 
-    // Sorting (supports name, email, or city)
     const validSortFields = ["name", "email", "city"];
     if (sort && validSortFields.includes(sort)) {
       query += ` ORDER BY ${sort} ASC`;
     } else {
-      query += " ORDER BY id ASC"; // Default sorting
+      query += " ORDER BY id ASC";
     }
 
-    // Pagination
     query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
@@ -60,9 +68,20 @@ const getClients = async (req, res) => {
 const getClientById = async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await pool.query("SELECT * FROM clients WHERE id = $1", [
-      id,
-    ]);
+    const query = `
+      SELECT 
+        id, 
+        name, 
+        email, 
+        COALESCE(phone, '') AS phone, 
+        COALESCE(address, '') AS address, 
+        COALESCE(city, '') AS city, 
+        COALESCE(country, '') AS country, 
+        COALESCE(notes, '') AS notes
+      FROM clients WHERE id = $1
+    `;
+
+    const client = await pool.query(query, [id]);
 
     if (client.rows.length === 0) {
       logger.warn(`Client Not Found - ID: ${id}`);
@@ -70,7 +89,7 @@ const getClientById = async (req, res) => {
     }
 
     logger.info(`Client Retrieved - ID: ${id}`);
-    res.status(200).json(client.rows[0]);
+    res.status(200).json({ data: client.rows[0] });
   } catch (err) {
     logger.error(`❌ Error fetching client: ${err.message}`);
     res.status(500).json({ error: "Server error" });
@@ -133,8 +152,25 @@ const updateClient = async (req, res) => {
     }
 
     const updatedClient = await pool.query(
-      "UPDATE clients SET name = $1, email = $2, phone = $3, address = $4, city = $5, country = $6, notes = $7 WHERE id = $8 RETURNING *",
-      [name, email, phone, address, city, country, notes, id]
+      `UPDATE clients 
+      SET name = COALESCE($1, name), 
+          email = COALESCE($2, email), 
+          phone = COALESCE($3, phone), 
+          address = COALESCE($4, address), 
+          city = COALESCE($5, city), 
+          country = COALESCE($6, country), 
+          notes = COALESCE($7, notes) 
+      WHERE id = $8 RETURNING *`,
+      [
+        name || existingClient.rows[0].name,
+        email || existingClient.rows[0].email,
+        phone || existingClient.rows[0].phone,
+        address || existingClient.rows[0].address,
+        city || existingClient.rows[0].city,
+        country || existingClient.rows[0].country,
+        notes || existingClient.rows[0].notes,
+        id,
+      ]
     );
 
     logger.info(
@@ -142,7 +178,6 @@ const updateClient = async (req, res) => {
         req.user ? req.user.email : "Unknown"
       }`
     );
-
     res
       .status(200)
       .json({ message: "Client updated", client: updatedClient.rows[0] });

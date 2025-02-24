@@ -170,4 +170,52 @@ const deletePart = async (req, res) => {
   }
 };
 
-module.exports = { getParts, getPartById, addPart, updatePart, deletePart };
+const getRepairsForPart = async (req, res) => {
+  try {
+    const { partId } = req.params;
+
+    const query = `
+      SELECT 
+        r.id AS repair_id,
+        r.repair_name,
+        TO_CHAR(r.repair_date, 'DD.MM.YYYY - FMDay') AS repair_date, -- ✅ FORMATTED DATE             r.description, 
+        c.name AS client_name,
+        p.full_name AS repairman_name,
+        m.model_name AS machine_name,
+        rp.quantity
+      FROM repair_parts rp
+      JOIN repairs r ON rp.repair_id = r.id
+      JOIN clients c ON r.client_id = c.id
+      JOIN profiles p ON r.repaired_by = p.user_id
+      JOIN machines m ON r.repaired_machine = m.id
+      WHERE rp.part_id = $1
+      ORDER BY r.repair_date DESC;
+    `;
+
+    const totalQuery = `
+      SELECT SUM(quantity) AS total_used
+      FROM repair_parts
+      WHERE part_id = $1;
+    `;
+
+    const repairs = await pool.query(query, [partId]);
+    const totalUsed = await pool.query(totalQuery, [partId]);
+
+    res.status(200).json({
+      repairs: repairs.rows,
+      totalUsed: totalUsed.rows[0]?.total_used || 0, // Ensure it's never undefined
+    });
+  } catch (err) {
+    console.error("❌ Error fetching repairs for part:", err.message);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+module.exports = {
+  getParts,
+  getPartById,
+  addPart,
+  updatePart,
+  deletePart,
+  getRepairsForPart,
+};

@@ -1,97 +1,124 @@
 const pool = require("../db");
-const logger = require("../logger"); // Import Winston Logger
+const logger = require("../logger");
 
-// Get all repairs (with filtering, sorting, and pagination)
+// ✅ Get all repairs (with pagination, filtering, and sorting)
 const getRepairs = async (req, res) => {
   try {
-    let { page, limit, search, sort } = req.query;
+    let { page, limit } = req.query;
     page = parseInt(page) || 1;
     limit = parseInt(limit) || 10;
     const offset = (page - 1) * limit;
 
-    let query = `SELECT r.id, c.name AS client_name, p.full_name AS repaired_by, r.repair_date, 
-                 r.description, r.parts_used, m.model_name AS repaired_machine
-                 FROM repairs r
-                 JOIN clients c ON r.client_id = c.id
-                 JOIN profiles p ON r.repaired_by = p.user_id
-                 JOIN machines m ON r.repaired_machine = m.id`;
-    let params = [];
-    let conditions = [];
+    const query = `
+      SELECT r.id, 
+             r.repair_name, 
+             c.name AS client_name, 
+             c.email AS client_email,  
+             c.phone AS client_phone,  
+             c.address AS client_address,  
+             c.city AS client_city,  
+             p.full_name AS repairman_name,  
+             TO_CHAR(r.repair_date, 'DD.MM.YYYY - FMDay') AS repair_date,
+             r.description AS repair_description,  
+             m.model_name AS machine_name,  
+             m.catalog_number AS catalog_number,  -- ✅ FIX: Include catalog_number
+             s.serial AS serial_number,  
+             COALESCE(
+               json_agg(
+                 json_build_object(
+                   'name', pa.name, 
+                   'quantity', COALESCE(rp.quantity, 0)
+                 )
+               ) FILTER (WHERE pa.name IS NOT NULL), 
+               '[]'
+             )::TEXT AS parts_used  
+      FROM repairs r
+      JOIN clients c ON r.client_id = c.id
+      JOIN profiles p ON r.repaired_by = p.user_id
+      JOIN machines m ON r.repaired_machine = m.id
+      LEFT JOIN serial_numbers s ON r.serial_number_id = s.id
+      LEFT JOIN repair_parts rp ON r.id = rp.repair_id
+      LEFT JOIN parts pa ON rp.part_id = pa.id
+      GROUP BY r.id, c.id, p.full_name, m.model_name, m.catalog_number, s.serial  -- ✅ FIX: Added catalog_number in GROUP BY
+      ORDER BY r.repair_name ASC  
+      LIMIT $1 OFFSET $2;
+    `;
 
-    if (search) {
-      conditions.push(
-        "(c.name ILIKE $" +
-          (params.length + 1) +
-          " OR m.model_name ILIKE $" +
-          (params.length + 1) +
-          ")"
-      );
-      params.push(`%${search}%`);
-    }
-
-    if (conditions.length > 0) {
-      query += " WHERE " + conditions.join(" AND ");
-    }
-
-    const validSortFields = [
-      "client_name",
-      "repaired_by",
-      "repair_date",
-      "parts_used",
-      "repaired_machine",
-    ];
-    if (sort && validSortFields.includes(sort)) {
-      query += ` ORDER BY ${sort} ASC`;
-    } else {
-      query += " ORDER BY r.id ASC";
-    }
-
-    query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
-
-    const repairs = await pool.query(query, params);
-    const totalRepairs = await pool.query("SELECT COUNT(*) FROM repairs");
+    const repairs = await pool.query(query, [limit, offset]);
 
     res.status(200).json({
-      total: parseInt(totalRepairs.rows[0].count),
+      total: repairs.rowCount,
       page,
       limit,
-      data: repairs.rows,
+      data: repairs.rows.map((repair) => ({
+        ...repair,
+        parts_used: JSON.parse(repair.parts_used),
+      })),
     });
   } catch (err) {
+    console.error("❌ Error fetching repairs:", err.message);
     res.status(500).json({ error: "Server error", details: err.message });
   }
 };
 
-// Get a single repair by ID
+// ✅ Get a single repair by ID
 const getRepairById = async (req, res) => {
   try {
     const { id } = req.params;
-    const repair = await pool.query(
-      `SELECT r.id, c.name AS client_name, p.full_name AS repaired_by, r.repair_date, 
-              r.description, r.parts_used, m.model_name AS repaired_machine
-       FROM repairs r
-       JOIN clients c ON r.client_id = c.id
-       JOIN profiles p ON r.repaired_by = p.user_id
-       JOIN machines m ON r.repaired_machine = m.id
-       WHERE r.id = $1`,
-      [id]
-    );
+
+    const query = `
+      SELECT r.id, 
+             r.repair_name, 
+             c.name AS client_name, 
+             c.email AS client_email,  
+             c.phone AS client_phone,  
+             c.address AS client_address,  
+             c.city AS client_city,  
+             p.full_name AS repairman_name,  
+             TO_CHAR(r.repair_date, 'DD.MM.YYYY - FMDay') AS repair_date,
+             r.description AS repair_description,  
+             m.id AS machine_id,  
+             m.model_name AS machine_name,  
+             m.catalog_number AS catalog_number,  -- ✅ FIX: Include catalog_number
+             s.id AS serial_id,  
+             s.serial AS serial_number,  
+             COALESCE(
+               json_agg(
+                 json_build_object(
+                   'name', pa.name, 
+                   'quantity', COALESCE(rp.quantity, 0)
+                 )
+               ) FILTER (WHERE pa.name IS NOT NULL), 
+               '[]'
+             )::TEXT AS parts_used  
+      FROM repairs r
+      JOIN clients c ON r.client_id = c.id
+      JOIN profiles p ON r.repaired_by = p.user_id
+      JOIN machines m ON r.repaired_machine = m.id
+      LEFT JOIN serial_numbers s ON r.serial_number_id = s.id
+      LEFT JOIN repair_parts rp ON r.id = rp.repair_id
+      LEFT JOIN parts pa ON rp.part_id = pa.id
+      WHERE r.id = $1
+      GROUP BY r.id, c.id, p.full_name, m.id, m.model_name, m.catalog_number, s.id, s.serial;  -- ✅ FIX: Added catalog_number in GROUP BY
+    `;
+
+    const repair = await pool.query(query, [id]);
 
     if (repair.rows.length === 0) {
-      logger.warn(`Repair Not Found - ID: ${id}`);
       return res.status(404).json({ error: "Repair not found" });
     }
 
-    logger.info(`Repair Retrieved - ID: ${id}`);
-    res.status(200).json(repair.rows[0]);
+    res.status(200).json({
+      ...repair.rows[0],
+      parts_used: JSON.parse(repair.rows[0].parts_used),
+    });
   } catch (err) {
-    logger.error(`❌ Error fetching repair: ${err.message}`);
+    console.error("❌ Error fetching repair:", err.message);
     res.status(500).json({ error: "Server error" });
   }
 };
 
-// Add a repair (Ensuring Foreign Keys Exist)
+// ✅ Add a new repair
 const addRepair = async (req, res) => {
   try {
     const {
@@ -101,67 +128,64 @@ const addRepair = async (req, res) => {
       description,
       parts_used,
       repaired_machine,
+      serial_number_id,
     } = req.body;
 
-    // Validate that client, repairman, and machine exist
-    const clientExists = await pool.query(
-      "SELECT id FROM clients WHERE id = $1",
-      [client_id]
-    );
-    if (clientExists.rows.length === 0) {
-      logger.warn(`Repair Add Failed - Client Not Found: ${client_id}`);
-      return res.status(400).json({ error: "Client does not exist" });
-    }
-
-    const repairmanExists = await pool.query(
-      "SELECT user_id FROM profiles WHERE user_id = $1",
-      [repaired_by]
-    );
-    if (repairmanExists.rows.length === 0) {
-      logger.warn(`Repair Add Failed - Repairman Not Found: ${repaired_by}`);
-      return res.status(400).json({ error: "Repairman does not exist" });
-    }
-
-    const machineExists = await pool.query(
-      "SELECT id FROM machines WHERE id = $1",
-      [repaired_machine]
-    );
-    if (machineExists.rows.length === 0) {
-      logger.warn(`Repair Add Failed - Machine Not Found: ${repaired_machine}`);
-      return res.status(400).json({ error: "Machine does not exist" });
-    }
-
+    // ✅ Insert new repair (without repair_name)
     const newRepair = await pool.query(
-      "INSERT INTO repairs (client_id, repaired_by, repair_date, description, parts_used, repaired_machine) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+      `INSERT INTO repairs (client_id, repaired_by, repair_date, description, repaired_machine, serial_number_id) 
+       VALUES ($1, $2, $3, $4, $5, $6) 
+       RETURNING id, repair_date`,
       [
         client_id,
         repaired_by,
         repair_date,
         description,
-        parts_used,
         repaired_machine,
+        serial_number_id,
       ]
     );
 
-    logger.info(
-      `Repair Added - ID: ${
-        newRepair.rows[0].id
-      }, Client: ${client_id}, Machine: ${repaired_machine}, Added By: ${
-        req.user ? req.user.email : "Unknown"
-      }`
-    );
+    // ✅ Extract Repair ID and Year
+    const repairId = newRepair.rows[0].id;
+    const repairYear = new Date(repair_date).getFullYear().toString().slice(-2); // ✅ Get last two digits of year
+
+    // ✅ Generate Repair Name in format `id/YY`
+    const repairName = `${repairId}/${repairYear}`;
+
+    // ✅ Update Repair with Generated Repair Name
+    await pool.query(`UPDATE repairs SET repair_name = $1 WHERE id = $2`, [
+      repairName,
+      repairId,
+    ]);
+
+    // ✅ Insert parts used into `repair_parts`
+    if (parts_used && parts_used.length > 0) {
+      const insertPartsQuery = `
+        INSERT INTO repair_parts (repair_id, part_id, quantity) 
+        VALUES ${parts_used
+          .map((_, i) => `($1, $${i * 2 + 2}, $${i * 2 + 3})`)
+          .join(", ")}
+      `;
+
+      await pool.query(insertPartsQuery, [
+        repairId,
+        ...parts_used.flatMap((p) => [p.part_id, p.quantity]),
+      ]);
+    }
 
     res.status(201).json({
       message: "Repair added successfully!",
-      repair: newRepair.rows[0],
+      repair_id: repairId,
+      repair_name: repairName, // ✅ Include repair_name in response
     });
   } catch (err) {
-    logger.error(`❌ Error adding repair: ${err.message}`);
-    res.status(500).json({ error: "Server error" });
+    console.error("❌ Error adding repair:", err);
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 };
 
-// Update a repair
+// ✅ Update an existing repair
 const updateRepair = async (req, res) => {
   try {
     const { id } = req.params;
@@ -170,72 +194,102 @@ const updateRepair = async (req, res) => {
       repaired_by,
       repair_date,
       description,
-      parts_used,
       repaired_machine,
+      serial_number_id,
+      parts_used, // 👈 Include this in request
     } = req.body;
 
-    // Check if repair exists
-    const existingRepair = await pool.query(
-      "SELECT * FROM repairs WHERE id = $1",
-      [id]
-    );
-    if (existingRepair.rows.length === 0) {
-      logger.warn(`Repair Not Found for Update - ID: ${id}`);
-      return res.status(404).json({ error: "Repair not found" });
-    }
-
-    const result = await pool.query(
-      "UPDATE repairs SET client_id = $1, repaired_by = $2, repair_date = $3, description = $4, parts_used = $5, repaired_machine = $6 WHERE id = $7 RETURNING *",
+    // ✅ Step 1: Update Repairs Table
+    await pool.query(
+      `UPDATE repairs 
+       SET client_id = COALESCE($1, client_id), 
+           repaired_by = COALESCE($2, repaired_by), 
+           repair_date = COALESCE($3, repair_date), 
+           description = COALESCE($4, description), 
+           repaired_machine = COALESCE($5, repaired_machine), 
+           serial_number_id = COALESCE($6, serial_number_id)
+       WHERE id = $7`,
       [
         client_id,
         repaired_by,
         repair_date,
         description,
-        parts_used,
         repaired_machine,
+        serial_number_id,
         id,
       ]
     );
 
-    logger.info(
-      `Repair Updated - ID: ${id}, Updated By: ${
-        req.user ? req.user.email : "Unknown"
-      }`
-    );
+    // ✅ Step 2: Update Parts Used in the Repair
+    if (parts_used) {
+      // 🔥 Delete existing parts for this repair
+      await pool.query(`DELETE FROM repair_parts WHERE repair_id = $1`, [id]);
 
-    res.status(200).json({
-      message: "Repair updated successfully!",
-      repair: result.rows[0],
-    });
+      // 🔥 Insert new parts
+      if (parts_used.length > 0) {
+        const insertPartsQuery = `
+          INSERT INTO repair_parts (repair_id, part_id, quantity) 
+          VALUES ${parts_used
+            .map((_, i) => `($1, $${i * 2 + 2}, $${i * 2 + 3})`)
+            .join(", ")}
+        `;
+
+        await pool.query(insertPartsQuery, [
+          id,
+          ...parts_used.flatMap((p) => [p.part_id, p.quantity]),
+        ]);
+      }
+    }
+
+    res.status(200).json({ message: "Repair updated successfully!" });
   } catch (err) {
-    logger.error(`❌ Error updating repair: ${err.message}`);
+    console.error("❌ Error updating repair:", err);
     res.status(500).json({ error: "Server error" });
   }
 };
 
-// Delete a repair
+// ✅ Delete a repair
 const deleteRepair = async (req, res) => {
   try {
     const { id } = req.params;
+
     const result = await pool.query(
       "DELETE FROM repairs WHERE id = $1 RETURNING *",
       [id]
     );
 
     if (result.rows.length === 0) {
-      logger.warn(`Repair Not Found for Deletion - ID: ${id}`);
       return res.status(404).json({ error: "Repair not found" });
     }
 
-    logger.info(
-      `Repair Deleted - ID: ${id}, Deleted By: ${
-        req.user ? req.user.email : "Unknown"
-      }`
-    );
-
     res.status(200).json({ message: "Repair deleted successfully!" });
   } catch (err) {
-    logger.error(`❌ Error deleting repair: ${err.message}`);
+    console.error("❌ Error deleting repair:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+// ✅ Get repairs for a specific machine
+const getRepairsForMachine = async (req, res) => {
+  try {
+    const { machine_id, client_id } = req.params;
+
+    const query = `
+      SELECT r.id, 
+             r.repair_name, 
+             TO_CHAR(r.repair_date, 'DD.MM.YYYY - FMDay') AS repair_date,
+             s.serial AS serial_number
+      FROM serial_numbers s
+      LEFT JOIN repairs r ON s.id = r.serial_number_id
+      WHERE s.machine_id = $1 AND s.client_id = $2
+      ORDER BY r.repair_date DESC NULLS LAST;
+    `;
+
+    const repairs = await pool.query(query, [machine_id, client_id]);
+
+    res.status(200).json({ data: repairs.rows });
+  } catch (err) {
+    console.error("❌ Error fetching repairs for machine:", err.message);
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -246,4 +300,5 @@ module.exports = {
   addRepair,
   updateRepair,
   deleteRepair,
+  getRepairsForMachine,
 };

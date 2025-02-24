@@ -5,7 +5,12 @@ const logger = require("../logger"); // Import Winston Logger
 const getMyProfile = async (req, res) => {
   try {
     const user = await pool.query(
-      "SELECT user_id, full_name, email, phone FROM profiles WHERE user_id = $1",
+      `SELECT p.user_id, p.full_name, p.email, p.phone, 
+              COALESCE(r.role_name, 'User') AS role_name
+       FROM profiles p
+       LEFT JOIN user_roles ur ON p.user_id = ur.user_id
+       LEFT JOIN roles r ON ur.role_id = r.id
+       WHERE p.user_id = $1`,
       [req.user.user_id]
     );
 
@@ -15,7 +20,7 @@ const getMyProfile = async (req, res) => {
     }
 
     logger.info(`Profile Retrieved - User ID: ${req.user.user_id}`);
-    res.status(200).json(user.rows[0]);
+    res.status(200).json(user.rows[0]); // ✅ Now includes role_name
   } catch (err) {
     logger.error(`❌ Error fetching profile: ${err.message}`);
     res.status(500).json({ error: "Server error" });
